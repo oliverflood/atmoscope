@@ -1,3 +1,4 @@
 *.json
 *.pth
-cloud_images
+data/raw
+data/images

@@ -81,7 +81,7 @@ def main():
     #------------------------------------------------------------------------------
     
     # Set desired start and end dates
-    graph_start_date     = datetime(2024,7,1)      # start date (yyyy,mm,dd)
+    graph_start_date     = datetime(2025,8,15)      # start date (yyyy,mm,dd)
     graph_end_date       = datetime.today().date() # end date, default is today's date
     
     # Convert to datetime objects
@@ -105,7 +105,7 @@ def main():
     
     # Create the full download link.
     download_src = "https://api.globe.gov/search/v1/measurement/protocol/measureddate/?{}startdate={}&enddate={" \
-                   "}&geojson=TRUE&sample=FALSE "
+                   "}&geojson=FALSE&sample=FALSE "
     download_src = download_src.format(protocol_string, graph_start_date.strftime("%Y-%m-%d"), graph_end_date.strftime("%Y-%m-%d"))
     
     # Where to save the downloaded file
