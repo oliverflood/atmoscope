@@ -1,4 +1,5 @@
-*.json
-*.pth
 data/raw
-data/images
+models
+
+.ipynb_checkpoints/
+__pycache__
