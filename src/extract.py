@@ -53,9 +53,8 @@ import pandas as pd
 from typing import Optional
 from tqdm import tqdm
 import requests
-from os.path import join
-from config import DATA_IMAGES
-from config import DATA_PROCESSED
+from os.path import join, relpath
+from config import DATA_IMAGES, DATA_PROCESSED, BASE_DIR
 
 
 def create_main_csv(file_path: str) -> None:
@@ -65,6 +64,7 @@ def create_main_csv(file_path: str) -> None:
 
     observations = [feat['properties'] for feat in data['features']]
 
+    DIRECTIONS = ['N', 'E', 'S', 'W', 'U']
     PHOTO_KEYS = [
         "skyconditionsNorthPhotoUrl",
         "skyconditionsEastPhotoUrl",
@@ -72,9 +72,6 @@ def create_main_csv(file_path: str) -> None:
         "skyconditionsWestPhotoUrl",
         "skyconditionsUpwardPhotoUrl"
     ]
-
-    DIRECTIONS = ['N', 'E', 'S', 'W', 'U']
-
     CLOUD_KEYS = [
         "skyconditionsAltocumulus",
         "skyconditionsAltostratus",
@@ -94,48 +91,64 @@ def create_main_csv(file_path: str) -> None:
     def has_jpg_photo(obs) -> bool:
         return any(is_jpg(obs.get(pk)) for pk in PHOTO_KEYS)
 
+    # create rows with feature columns for all jpg photos
     rows = []
     for obs in observations:
         if not (has_jpg_photo(obs)):
             continue
-
+        
+        # grab relevant observation-level features
         one_hot = {ck[13:].lower(): int(obs[ck] == 'true') for ck in CLOUD_KEYS}
         obs_id = obs['skyconditionsObservationId']
+        user_id = int(obs['skyconditionsUserid'])
+
+        # add rows for valid jpg photos
         for pk, direction in zip(PHOTO_KEYS, DIRECTIONS):
             photo_url = obs.get(pk)
-            if photo_url[-3:] != 'jpg':
-                continue
-            if photo_url and photo_url != 'null':
-                row = {'photo_url': photo_url, 'direction': direction, 'obs_id': obs_id}
+            if is_jpg(photo_url):
+                row = {'photo_url': photo_url, 
+                       'direction': direction, 
+                       'obs_id': obs_id, 
+                       'user_id': user_id}
                 row.update(one_hot)
                 rows.append(row)
 
+    # create DataFrame and a small sample
     df = pd.DataFrame(rows)
-    subset = df.head(30).copy()
+    subset = df.head(1000).copy()
     image_paths = []
+
+    # download photo urls to local storage
     for _, row in tqdm(subset.iterrows(), total=len(subset)):
         url = row['photo_url']
         obs_id = row['obs_id']
         direction = row['direction']
         filename = f'{obs_id}_{direction}.jpg'
         filepath = join(DATA_IMAGES, filename)
+        relative_path = relpath(filepath, start=BASE_DIR)
+
+        # avoid re-downloading photos
         if isfile(filepath):
-            image_paths.append(filepath)
+            image_paths.append(relative_path)
             continue
+
+        # handle exceptions when downloading photos
         try:
             response = requests.get(url, timeout=10)
             if response.status_code == 200:
                 with open(filepath, 'wb') as f:
                     f.write(response.content)
-                image_paths.append(filepath)
+                image_paths.append(relative_path)
             else:
                 image_paths.append(None)
         except Exception as e:
             image_paths.append(None)
     
+    # save DataFrame as csv
     subset['local_path'] = image_paths
     subset.to_csv(f'{DATA_PROCESSED}/main.csv')
 
 if __name__ == '__main__':
-    path = download_globe_sky_data()
+    # path = download_globe_sky_data()
+    path = '/content/drive/MyDrive/clouds-ml/data/raw/sky_conditions_20250801_20250901.json'
     create_main_csv(path)
