@@ -101,6 +101,8 @@ def create_main_csv(file_path: str) -> None:
         one_hot = {ck[13:].lower(): int(obs[ck] == 'true') for ck in CLOUD_KEYS}
         obs_id = obs['skyconditionsObservationId']
         user_id = int(obs['skyconditionsUserid'])
+        globe_trained = 1 if obs['skyconditionsIsGlobeTrained'] == 'true' else 0
+        citizen_science = 1 if obs['skyconditionsIsCitizenScience'] == 'true' else 0
 
         # add rows for valid jpg photos
         for pk, direction in zip(PHOTO_KEYS, DIRECTIONS):
@@ -109,13 +111,18 @@ def create_main_csv(file_path: str) -> None:
                 row = {'photo_url': photo_url, 
                        'direction': direction, 
                        'obs_id': obs_id, 
-                       'user_id': user_id}
+                       'user_id': user_id,
+                       'globe_trained': globe_trained,
+                       'citizen_science': citizen_science}
                 row.update(one_hot)
                 rows.append(row)
 
     # create DataFrame and a small sample
     df = pd.DataFrame(rows)
-    subset = df.head(1000).copy()
+    # subset = df.head(1000).copy()
+
+    # STUPID: just pull whole df no images
+    subset = df
     image_paths = []
 
     # download photo urls to local storage
@@ -127,28 +134,31 @@ def create_main_csv(file_path: str) -> None:
         filepath = join(DATA_IMAGES, filename)
         relative_path = relpath(filepath, start=BASE_DIR)
 
-        # avoid re-downloading photos
-        if isfile(filepath):
-            image_paths.append(relative_path)
-            continue
+        # # avoid re-downloading photos
+        # if isfile(filepath):
+        #     image_paths.append(relative_path)
+        #     continue
 
-        # handle exceptions when downloading photos
-        try:
-            response = requests.get(url, timeout=10)
-            if response.status_code == 200:
-                with open(filepath, 'wb') as f:
-                    f.write(response.content)
-                image_paths.append(relative_path)
-            else:
-                image_paths.append(None)
-        except Exception as e:
-            image_paths.append(None)
+        # # handle exceptions when downloading photos
+        # try:
+        #     response = requests.get(url, timeout=10)
+        #     if response.status_code == 200:
+        #         with open(filepath, 'wb') as f:
+        #             f.write(response.content)
+        #         image_paths.append(relative_path)
+        #     else:
+        #         image_paths.append(None)
+        # except Exception as e:
+        #     image_paths.append(None)
+        
+        # STUPID: patch for quick more data w/o photo downloads
+        image_paths.append(None)
     
     # save DataFrame as csv
     subset['local_path'] = image_paths
-    subset.to_csv(f'{DATA_PROCESSED}/main.csv')
+    subset.to_csv(f'{DATA_PROCESSED}/three_years.csv')
 
 if __name__ == '__main__':
     # path = download_globe_sky_data()
-    path = '/content/drive/MyDrive/clouds-ml/data/raw/sky_conditions_20250801_20250901.json'
+    path = '/content/drive/MyDrive/clouds-ml/data/raw/sky_conditions_20220901_20250901.json'
     create_main_csv(path)
