@@ -1,5 +1,10 @@
 data/raw
 data/images
+data/processed
+data/processed/three_years.csv
+data/images_10k
+data/ccsn_images
+data/cloud_gaze_images
 models
 
 .ipynb_checkpoints/
