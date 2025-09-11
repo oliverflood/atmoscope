@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 import pandas as pd
+import hashlib
 
 class SourceLoader(ABC):
     @abstractmethod
@@ -49,19 +50,60 @@ class GazeLoader(SourceLoader):
         for direction in DIRECTIONS:
             dir_labels = {f"{direction} {k}": v for k, v in LABEL_COL_MAP.items()} # {"North Cumulus": "cumulus" ...}
             per_image_labels = {f"{direction} {k}": v for k, v in PER_IMAGE_META.items()}
+            url_col = f"{direction} Image URL"
+            
+            for _, row in df.iterrows():
+                class_labels = {v: row.get(k) for k, v in dir_labels.items()}
+                
+                if all(val == 5 for val in class_labels.values()):
+                    for key in class_labels:
+                        class_labels[key] = 0
+                    class_labels["not_classified"] = 1
+                else:
+                    class_labels["not_classified"] = 0
 
-            for i, row in df.iterrows():
-                out_row = {v: row.get(k) for k, v in dir_labels.items()}
-                out_row.update({v: row.get(k) for k, v in per_image_labels.items()})
-                out_row.update({v: row.get(k) for k, v in GLOBAL_META.items()})
+                image_metadata = {v: row.get(k) for k, v in per_image_labels.items()}
+                row_metadata = {v: row.get(k) for k, v in GLOBAL_META.items()}
 
+                out_row = {
+                    "photo_url": row.get(url_col),
+                    "direction": direction.lower()
+                }
+                for dict in [class_labels, image_metadata, row_metadata]:
+                    out_row.update(dict)
                 out_rows.append(out_row)
+        
+        flat = pd.DataFrame(out_rows)
+        flat["source"] = "gaze"
 
-        return pd.DataFrame(out_rows)
+        return flat
 
+
+
+from abc import ABC
+from dataclasses import dataclass
+
+@dataclass
+class LabelSpace:
+    name: str
+    classes: list[str]
+
+COARSE_8 = LabelSpace("coarse8", [
+    "altostratus_stratus", 
+    "cirrocumulus_altocumulus",
+    "cirrus_cirrostratus", 
+    "clearsky",
+    "cumulonimbus", 
+    "cumulus", 
+    "not_classified",
+    "stratocumulus"
+])
 
 from ..config import DATA_INTERIM
-gazeLoader = GazeLoader(f"{DATA_INTERIM}/gaze_flat.csv")
+gazeLoader = GazeLoader(f"{DATA_INTERIM}/gaze_raw.csv")
 df = gazeLoader.load()
-print(df.head())
+
+col_sum = df[COARSE_8.classes].sum(axis=0)
+for col, total in col_sum.items():
+    print(f"{col}: {total}")
 
