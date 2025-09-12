@@ -112,14 +112,22 @@ for col, total in col_sum.items():
 import numpy as np
 
 class TaskAdapter(ABC):
-    def __init__(self, label_space: LabelSpace):
-        self.label_space = label_space
-    def map_row(self, row):
+    @property
+    @abstractmethod
+    def classes(self):
+        pass
+    
+    @abstractmethod
+    def map_row(self, row) -> np.ndarray:
         pass
 
 class GazeToCoarse(TaskAdapter):
     def __init__(self):
-        self.classes = COARSE_8.classes
+        self.label_space = COARSE_8
+    
+    @property
+    def classes(self):
+        return self.label_space.classes
 
     def map_row(self, row: pd.Series) -> np.ndarray:
         y = np.zeros(len(self.classes))
@@ -161,14 +169,138 @@ class ImageStore:
         
         if not fpath.exists():
             r = requests.get(url, timeout=12)
-            r.raise_for_status() # error if we get unsuccessful code
+            r.raise_for_status()
             fpath.write_bytes(r.content)
         
         return Image.open(fpath).convert("RGB")
     
+
+import torch
+from torch.utils.data import Dataset
+
+class ImageDataset(Dataset):
+    def __init__(self, table: pd.DataFrame, adapter: TaskAdapter, store: ImageStore, transforms=None):
+        self.df = table.reset_index(drop=True)
+        self.adapter = adapter
+        self.store = store
+        self.transforms = transforms
+        self.classes = adapter.classes
+    
+    def __len__(self):
+        return len(self.df)
+    
+    def __getitem__(self, index):
+        row = self.df.iloc[index]
+        img = self.store.load(row)
+        if self.transforms:
+            img = self.transforms(img)
+        y_vec = self.adapter.map_row(row)
+        y = int(y_vec.argmax())
+        y = torch.tensor(y, dtype=torch.long)
+        meta = {
+            "id": row.get("id"),
+            "source": row.get("source"),
+            # "observation_group": row.get("observation_group"),
+            "direction": row.get("direction"),
+        }
+
+        # IGNORING METADATA (for now)
+        meta = {}
+        return img, y, meta
+    
+
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+from ..config import DATA_INTERIM
+csv_path = f"{DATA_INTERIM}/gaze_raw.csv"
+df = GazeLoader(csv_path).load()
+
+from sklearn.model_selection import GroupShuffleSplit
+gss = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
+groups = np.array(df["observation_number"].astype(str).values)
+train_idx, val_idx = next(gss.split(df, groups=groups))
+
+
+from torchvision import transforms as T
+tfm = T.Compose([
+    T.Resize(256), T.CenterCrop(224),
+    T.ToTensor(),
+    T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
+])
+
 store = ImageStore()
-store.load(df.iloc[0])
-
 adapter = GazeToCoarse()
-print(adapter.map_row(df.iloc[0]))
+full_ds = ImageDataset(df, adapter, store, transforms=tfm)
+val_ds = ImageDataset(df, adapter, store, transforms=tfm)
 
+tr_ds = torch.utils.data.Subset(full_ds, train_idx)
+va_ds = torch.utils.data.Subset(val_ds,  val_idx)
+
+from torch.utils.data import DataLoader
+train_loader = DataLoader(tr_ds, batch_size=32, shuffle=True,  num_workers=2, pin_memory=True)
+val_loader = DataLoader(va_ds, batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
+
+from torchvision import models
+import torch.nn as nn
+num_classes = len(adapter.classes)
+model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
+in_feats = model.fc.in_features
+model.fc = nn.Linear(in_feats, num_classes)
+model = model.to(device)
+
+criterion = torch.nn.CrossEntropyLoss()
+optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-2)
+
+
+from tqdm.auto import tqdm
+scaler = torch.cuda.amp.GradScaler()
+amp_enabled = torch.cuda.is_available()
+
+def run_epoch(dl, train=True, epoch=1):
+    phase = "Train" if train else "Val"
+    model.train() if train else model.eval()
+    total_loss, correct, total = 0.0, 0, 0
+
+    pbar = tqdm(dl, desc=f"{phase} {epoch}", unit="batch", leave=False)
+    for imgs, y, _ in pbar:
+        imgs = imgs.to(device, non_blocking=True)
+        y = y.to(device, non_blocking=True).long()
+
+        if train:
+            optimizer.zero_grad(set_to_none=True)
+
+        with torch.autocast("cuda", enabled=amp_enabled), torch.set_grad_enabled(train):
+            logits = model(imgs)
+            loss = criterion(logits, y)
+
+        if train:
+            if amp_enabled:
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                loss.backward()
+                optimizer.step()
+
+        bs = imgs.size(0)
+        total_loss += loss.item() * bs
+        total += bs
+        correct += (logits.argmax(dim=1) == y).sum().item()
+
+        avg_loss = total_loss / max(total, 1)
+        acc = correct / max(total, 1)
+        postfix = {"loss": f"{avg_loss:.4f}", "acc": f"{acc:.3f}"}
+        if train:
+            postfix["lr"] = f"{optimizer.param_groups[0]['lr']:.2e}"
+        pbar.set_postfix(postfix)
+
+    return total_loss / max(total, 1), correct / max(total, 1)
+
+EPOCHS = 10
+for ep in range(1, EPOCHS + 1):
+    tr_loss, tr_acc = run_epoch(train_loader, train=True, epoch=ep)
+    va_loss, va_acc = run_epoch(val_loader, train=False, epoch=ep)
+    tqdm.write(f"Epoch {ep:02d} | "
+               f"train_loss {tr_loss:.4f}  train_acc {tr_acc:.3f} | "
+               f"val_loss {va_loss:.4f}  val_acc {va_acc:.3f}")
