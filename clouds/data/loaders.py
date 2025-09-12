@@ -195,8 +195,9 @@ class ImageDataset(Dataset):
         if self.transforms:
             img = self.transforms(img)
         y_vec = self.adapter.map_row(row)
-        y = int(y_vec.argmax())
-        y = torch.tensor(y, dtype=torch.long)
+        # y = int(y_vec.argmax())
+        # y = torch.tensor(y, dtype=torch.long)
+        y = torch.from_numpy(y_vec).float()
         meta = {
             "id": row.get("id"),
             "source": row.get("source"),
@@ -249,58 +250,69 @@ in_feats = model.fc.in_features
 model.fc = nn.Linear(in_feats, num_classes)
 model = model.to(device)
 
-criterion = torch.nn.CrossEntropyLoss()
+train_label_mat = df.iloc[train_idx][adapter.classes].values.astype("float64")
+n_pos = train_label_mat.sum(axis=0)
+N = len(train_idx)
+pos_weight_np = (N - n_pos) / (n_pos + 1e-8)
+pos_weight = torch.tensor(pos_weight_np, dtype=torch.float32, device=device)
+
+criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-2)
 
-
 from tqdm.auto import tqdm
-scaler = torch.cuda.amp.GradScaler()
-amp_enabled = torch.cuda.is_available()
+import torch
 
+THRESH = 0.5
 def run_epoch(dl, train=True, epoch=1):
     phase = "Train" if train else "Val"
     model.train() if train else model.eval()
-    total_loss, correct, total = 0.0, 0, 0
+    total_loss, total, tp, fp, fn = 0.0, 0, 0, 0, 0
 
     pbar = tqdm(dl, desc=f"{phase} {epoch}", unit="batch", leave=False)
     for imgs, y, _ in pbar:
         imgs = imgs.to(device, non_blocking=True)
-        y = y.to(device, non_blocking=True).long()
+        y = y.to(device, non_blocking=True).float()
 
         if train:
             optimizer.zero_grad(set_to_none=True)
 
-        with torch.autocast("cuda", enabled=amp_enabled), torch.set_grad_enabled(train):
+        with torch.autocast("cuda", enabled=False), torch.set_grad_enabled(train):
             logits = model(imgs)
             loss = criterion(logits, y)
 
         if train:
-            if amp_enabled:
-                scaler.scale(loss).backward()
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                loss.backward()
-                optimizer.step()
+            loss.backward()
+            optimizer.step()
 
         bs = imgs.size(0)
         total_loss += loss.item() * bs
         total += bs
-        correct += (logits.argmax(dim=1) == y).sum().item()
 
+        with torch.no_grad():
+            probs = torch.sigmoid(logits)
+            preds = (probs >= THRESH).float()
+            tp += (preds.mul(y)).sum().item()
+            fp += (preds.mul(1 - y)).sum().item()
+            fn += ((1 - preds).mul(y)).sum().item()
+
+        prec = tp / max(tp + fp, 1e-8)
+        rec = tp / max(tp + fn, 1e-8)
+        f1 = 2 * prec * rec / max(prec + rec, 1e-8)
         avg_loss = total_loss / max(total, 1)
-        acc = correct / max(total, 1)
-        postfix = {"loss": f"{avg_loss:.4f}", "acc": f"{acc:.3f}"}
+        postfix = {"loss": f"{avg_loss:.4f}", "f1": f"{f1:.3f}"}
         if train:
             postfix["lr"] = f"{optimizer.param_groups[0]['lr']:.2e}"
         pbar.set_postfix(postfix)
 
-    return total_loss / max(total, 1), correct / max(total, 1)
+    prec = tp / max(tp + fp, 1e-8)
+    rec = tp / max(tp + fn, 1e-8)
+    f1 = 2 * prec * rec / max(prec + rec, 1e-8)
+    return total_loss / max(total, 1), f1
 
 EPOCHS = 10
 for ep in range(1, EPOCHS + 1):
     tr_loss, tr_acc = run_epoch(train_loader, train=True, epoch=ep)
     va_loss, va_acc = run_epoch(val_loader, train=False, epoch=ep)
     tqdm.write(f"Epoch {ep:02d} | "
-               f"train_loss {tr_loss:.4f}  train_acc {tr_acc:.3f} | "
-               f"val_loss {va_loss:.4f}  val_acc {va_acc:.3f}")
+               f"train_loss {tr_loss:.4f}  train f1 {tr_acc:.3f} | "
+               f"val_loss {va_loss:.4f}  val f1 {va_acc:.3f}")
