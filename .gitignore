@@ -6,6 +6,7 @@ data/images_10k
 data/ccsn_images
 data/cloud_gaze_images
 models
+best.pt
 
 .ipynb_checkpoints/
 __pycache__

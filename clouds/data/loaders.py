@@ -104,9 +104,9 @@ from ..config import DATA_INTERIM
 gazeLoader = GazeLoader(f"{DATA_INTERIM}/gaze_raw.csv")
 df = gazeLoader.load()
 
-col_sum = df[COARSE_8.classes].sum(axis=0)
-for col, total in col_sum.items():
-    print(f"{col}: {total}")
+# col_sum = df[COARSE_8.classes].sum(axis=0)
+# for col, total in col_sum.items():
+#     print(f"{col}: {total}")
 
 
 import numpy as np
@@ -211,6 +211,82 @@ class ImageDataset(Dataset):
     
 
 
+
+from dataclasses import dataclass
+from typing import List, Optional, Dict, Any
+import numpy as np
+import torch
+from sklearn.metrics import f1_score, average_precision_score
+
+@dataclass
+class MultiLabelMetrics:
+    classes: List[str]
+    thresholds: Optional[np.ndarray] = None
+
+    def __post_init__(self):
+        self.reset()
+
+    def reset(self):
+        self._y_true: List[np.ndarray] = []
+        self._y_prob: List[np.ndarray] = []
+
+    @torch.no_grad()
+    def update(self, y_true: torch.Tensor, logits: torch.Tensor):
+        # y_true: [B, C] floats from {0,1}
+        # logits: [B, C] raw scores
+        probs = torch.sigmoid(logits).detach().cpu().numpy()
+        self._y_prob.append(probs)
+        self._y_true.append(y_true.detach().cpu().numpy())
+
+    def _stack(self):
+        y_true = np.vstack(self._y_true) if self._y_true else np.zeros((0, len(self.classes)), dtype=np.float32)
+        y_prob = np.vstack(self._y_prob) if self._y_prob else np.zeros_like(y_true)
+        return y_true, y_prob
+
+    def compute(self) -> Dict[str, Any]:
+        y_true, y_prob = self._stack()
+        if y_true.size == 0:
+            return {"micro_f1": 0.0, "macro_f1": 0.0, "mAP": 0.0, "per_class_f1": {}, "support": {}}
+
+        th = self.thresholds if self.thresholds is not None else 0.5 * np.ones(len(self.classes))
+        y_pred = (y_prob >= th.reshape(1, -1)).astype(np.float32)
+
+        micro = f1_score(y_true, y_pred, average="micro", zero_division=0)
+        macro = f1_score(y_true, y_pred, average="macro", zero_division=0)
+        per_f1 = np.array(f1_score(y_true, y_pred, average=None, zero_division=0))
+        support = y_true.sum(axis=0).astype(int).tolist()
+
+        # mAP = average_precision_score(y_true, y_prob, average="macro")
+        mAP = 0
+
+        return {
+            "micro_f1": float(micro),
+            "macro_f1": float(macro),
+            "mAP": float(mAP),
+            "per_class_f1": {c: float(f) for c, f in zip(self.classes, per_f1)},
+            "support":     {c: s for c, s in zip(self.classes, support)},
+        }
+
+    def tune_thresholds_for_f1(self, max_points: int = 19) -> np.ndarray:
+        y_true, y_prob = self._stack()
+        if y_true.size == 0:
+            return np.full(len(self.classes), 0.5, dtype=np.float32)
+        
+        ts = np.linspace(0.05, 0.95, max_points)
+        best = np.zeros(len(self.classes), dtype=np.float32)
+
+        for c in range(len(self.classes)):
+            f1s = [f1_score(y_true[:, c], (y_prob[:, c] >= t).astype(np.float32), zero_division=0) for t in ts]
+            best[c] = ts[int(np.argmax(np.array(f1s)))]
+            
+        self.thresholds = best
+        return best
+
+
+
+
+
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 from ..config import DATA_INTERIM
@@ -225,7 +301,8 @@ train_idx, val_idx = next(gss.split(df, groups=groups))
 
 from torchvision import transforms as T
 tfm = T.Compose([
-    T.Resize(256), T.CenterCrop(224),
+    T.Resize(256), 
+    T.CenterCrop(224),
     T.ToTensor(),
     T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
 ])
@@ -262,11 +339,11 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-2)
 from tqdm.auto import tqdm
 import torch
 
-THRESH = 0.5
-def run_epoch(dl, train=True, epoch=1):
+def run_epoch(dl, metrics: MultiLabelMetrics, train=True, epoch=1):
     phase = "Train" if train else "Val"
     model.train() if train else model.eval()
-    total_loss, total, tp, fp, fn = 0.0, 0, 0, 0, 0
+    metrics.reset()
+    total_loss, total = 0.0, 0
 
     pbar = tqdm(dl, desc=f"{phase} {epoch}", unit="batch", leave=False)
     for imgs, y, _ in pbar:
@@ -276,7 +353,7 @@ def run_epoch(dl, train=True, epoch=1):
         if train:
             optimizer.zero_grad(set_to_none=True)
 
-        with torch.autocast("cuda", enabled=False), torch.set_grad_enabled(train):
+        with torch.set_grad_enabled(train):
             logits = model(imgs)
             loss = criterion(logits, y)
 
@@ -288,31 +365,33 @@ def run_epoch(dl, train=True, epoch=1):
         total_loss += loss.item() * bs
         total += bs
 
-        with torch.no_grad():
-            probs = torch.sigmoid(logits)
-            preds = (probs >= THRESH).float()
-            tp += (preds.mul(y)).sum().item()
-            fp += (preds.mul(1 - y)).sum().item()
-            fn += ((1 - preds).mul(y)).sum().item()
+        metrics.update(y, logits)
+        cur = metrics.compute()
+        pbar.set_postfix({"loss": f"{(total_loss/max(total,1)):.4f}", "μF1": f"{cur['micro_f1']:.3f}"})
 
-        prec = tp / max(tp + fp, 1e-8)
-        rec = tp / max(tp + fn, 1e-8)
-        f1 = 2 * prec * rec / max(prec + rec, 1e-8)
-        avg_loss = total_loss / max(total, 1)
-        postfix = {"loss": f"{avg_loss:.4f}", "f1": f"{f1:.3f}"}
-        if train:
-            postfix["lr"] = f"{optimizer.param_groups[0]['lr']:.2e}"
-        pbar.set_postfix(postfix)
+    epoch_stats = metrics.compute()
+    return total_loss / max(total, 1), epoch_stats
 
-    prec = tp / max(tp + fp, 1e-8)
-    rec = tp / max(tp + fn, 1e-8)
-    f1 = 2 * prec * rec / max(prec + rec, 1e-8)
-    return total_loss / max(total, 1), f1
+
+metrics_train = MultiLabelMetrics(adapter.classes)
+metrics_val = MultiLabelMetrics(adapter.classes)
 
 EPOCHS = 10
+best_micro = 0.0
 for ep in range(1, EPOCHS + 1):
-    tr_loss, tr_acc = run_epoch(train_loader, train=True, epoch=ep)
-    va_loss, va_acc = run_epoch(val_loader, train=False, epoch=ep)
-    tqdm.write(f"Epoch {ep:02d} | "
-               f"train_loss {tr_loss:.4f}  train f1 {tr_acc:.3f} | "
-               f"val_loss {va_loss:.4f}  val f1 {va_acc:.3f}")
+    tr_loss, tr = run_epoch(train_loader, metrics_train, train=True, epoch=ep)
+    va_loss, va = run_epoch(val_loader, metrics_val, train=False, epoch=ep)
+
+    if va["micro_f1"] > best_micro:
+        best_micro = va["micro_f1"]
+        torch.save(model.state_dict(), "best.pt")
+
+    tqdm.write(
+        f"Epoch {ep:02d} | "
+        f"train_loss {tr_loss:.4f}  microF1 {tr['micro_f1']:.3f}  macroF1 {tr['macro_f1']:.3f}  mAP {tr['mAP']:.3f} | "
+        f"val_loss {va_loss:.4f}  microF1 {va['micro_f1']:.3f}  macroF1 {va['macro_f1']:.3f}  mAP {va['mAP']:.3f}"
+    )
+
+from ..config import MODELS_DIR
+best_thr = metrics_val.tune_thresholds_for_f1()
+np.save(f"{MODELS_DIR}/best_thresholds.npy", best_thr)
