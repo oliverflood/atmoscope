@@ -89,24 +89,19 @@ class LabelSpace:
     name: str
     classes: list[str]
 
-COARSE_8 = LabelSpace("coarse8", [
+COARSE_7 = LabelSpace("coarse8", [
     "altostratus_stratus", 
     "cirrocumulus_altocumulus",
     "cirrus_cirrostratus", 
     "clearsky",
     "cumulonimbus", 
     "cumulus", 
-    "not_classified",
     "stratocumulus"
 ])
 
 from ..config import DATA_INTERIM
 gazeLoader = GazeLoader(f"{DATA_INTERIM}/gaze_raw.csv")
 df = gazeLoader.load()
-
-# col_sum = df[COARSE_8.classes].sum(axis=0)
-# for col, total in col_sum.items():
-#     print(f"{col}: {total}")
 
 
 import numpy as np
@@ -123,7 +118,7 @@ class TaskAdapter(ABC):
 
 class GazeToCoarse(TaskAdapter):
     def __init__(self):
-        self.label_space = COARSE_8
+        self.label_space = COARSE_7
     
     @property
     def classes(self):
@@ -256,15 +251,25 @@ class MultiLabelMetrics:
         per_f1 = np.array(f1_score(y_true, y_pred, average=None, zero_division=0))
         support = y_true.sum(axis=0).astype(int).tolist()
 
-        # mAP = average_precision_score(y_true, y_prob, average="macro")
-        mAP = 0
+
+        support = y_true.sum(axis=0)
+        per_ap = []
+        for c in range(y_true.shape[1]):
+            if support[c] == 0:
+                per_ap.append(float('nan'))
+            else:
+                per_ap.append(average_precision_score(y_true[:, c], y_prob[:, c]))
+        macro_AP = (np.nanmean(per_ap) if np.any(np.isfinite(per_ap)) else float('nan'))
+        micro_AP = (average_precision_score(y_true.ravel(), y_prob.ravel())
+                    if y_true.sum() > 0 else float('nan'))
 
         return {
             "micro_f1": float(micro),
             "macro_f1": float(macro),
-            "mAP": float(mAP),
+            "micro_AP": micro_AP,
+            "macro_AP": macro_AP,
             "per_class_f1": {c: float(f) for c, f in zip(self.classes, per_f1)},
-            "support":     {c: s for c, s in zip(self.classes, support)},
+            "support": {c: s for c, s in zip(self.classes, support)},
         }
 
     def tune_thresholds_for_f1(self, max_points: int = 19) -> np.ndarray:
@@ -278,7 +283,7 @@ class MultiLabelMetrics:
         for c in range(len(self.classes)):
             f1s = [f1_score(y_true[:, c], (y_prob[:, c] >= t).astype(np.float32), zero_division=0) for t in ts]
             best[c] = ts[int(np.argmax(np.array(f1s)))]
-            
+
         self.thresholds = best
         return best
 
@@ -388,8 +393,8 @@ for ep in range(1, EPOCHS + 1):
 
     tqdm.write(
         f"Epoch {ep:02d} | "
-        f"train_loss {tr_loss:.4f}  microF1 {tr['micro_f1']:.3f}  macroF1 {tr['macro_f1']:.3f}  mAP {tr['mAP']:.3f} | "
-        f"val_loss {va_loss:.4f}  microF1 {va['micro_f1']:.3f}  macroF1 {va['macro_f1']:.3f}  mAP {va['mAP']:.3f}"
+        f"train_loss {tr_loss:.4f}  microF1 {tr['micro_f1']:.3f}  macroF1 {tr['macro_f1']:.3f}  microAP {tr['micro_AP']:.3f} macroAP {tr['macro_AP']:.3f} | "
+        f"val_loss {va_loss:.4f}  microF1 {va['micro_f1']:.3f}  macroF1 {va['macro_f1']:.3f}  microAP {va['micro_AP']:.3f}  macroAP {va['macro_AP']:.3f}"
     )
 
 from ..config import MODELS_DIR
