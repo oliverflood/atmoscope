@@ -1,4 +1,3 @@
-
 from dataclasses import dataclass
 from typing import Optional, Dict, Any, Callable, List
 import numpy as np
@@ -114,4 +113,3 @@ class Trainer:
             metrics.update(y, logits)
 
         return metrics.compute()
-

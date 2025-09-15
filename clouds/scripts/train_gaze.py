@@ -1,5 +1,10 @@
+from torch.utils.data import DataLoader
+from torchvision import transforms as T, models
+import torch.nn as nn
 import torch
 import numpy as np
+from sklearn.model_selection import GroupShuffleSplit
+from ..config import DATA_INTERIM, MODELS_DIR
 from clouds import (
     GazeLoader, 
     ImageDataset, 
@@ -12,16 +17,13 @@ from clouds import (
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-from ..config import DATA_INTERIM
 csv_path = f"{DATA_INTERIM}/gaze_raw.csv"
 df = GazeLoader(csv_path).load()
 
-from sklearn.model_selection import GroupShuffleSplit
 gss = GroupShuffleSplit(n_splits=1, test_size=0.15, random_state=42)
 groups = np.array(df["observation_number"].astype(str).values)
 train_idx, val_idx = next(gss.split(df, groups=groups))
 
-from torchvision import transforms as T
 tfm = T.Compose([
     T.Resize(256), 
     T.CenterCrop(224),
@@ -37,12 +39,10 @@ val_ds = ImageDataset(df, adapter, store, transforms=tfm)
 tr_ds = torch.utils.data.Subset(full_ds, train_idx)
 va_ds = torch.utils.data.Subset(val_ds,  val_idx)
 
-from torch.utils.data import DataLoader
 train_loader = DataLoader(tr_ds, batch_size=32, shuffle=True,  num_workers=2, pin_memory=True)
 val_loader = DataLoader(va_ds, batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
 
-from torchvision import models
-import torch.nn as nn
+
 num_classes = len(adapter.classes)
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 in_feats = model.fc.in_features
@@ -58,7 +58,6 @@ pos_weight = torch.tensor(pos_weight_np, dtype=torch.float32, device=device)
 criterion = torch.nn.BCEWithLogitsLoss(pos_weight=pos_weight)
 optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-2)
 
-from ..config import MODELS_DIR
 # ckpt_path = f"{MODELS_DIR}/resnet18_coarse7_best.pt"
 # ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
 # model.load_state_dict(ckpt)
@@ -77,3 +76,7 @@ best_val = trainer.fit(train_loader, val_loader, config)
 
 val_stats = trainer.evaluate(val_loader)
 print(val_stats)
+
+# next: refactor this script to avoid mixing high/low level code
+# move imports to top of file
+# continue some abstractions?
