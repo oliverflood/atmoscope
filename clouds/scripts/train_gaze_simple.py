@@ -1,5 +1,3 @@
-import clouds.presets.data_presets
-import clouds.presets.model_presets
 from clouds.experiments.runner import run_experiment
 from clouds.config import MODELS_DIR
 import torch
