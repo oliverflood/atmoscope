@@ -1,12 +1,12 @@
-data/raw
-data/images
-data/processed
-data/processed/three_years.csv
-data/images_10k
-data/ccsn_images
-data/cloud_gaze_images
-models
-best.pt
+# Data of all sorts
+data/
 
+# Models
+models/
+
+# Python litter
 .ipynb_checkpoints/
 __pycache__
+
+# MLflow local store
+mlruns/
