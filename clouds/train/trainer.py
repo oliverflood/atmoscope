@@ -4,6 +4,7 @@ import numpy as np
 import torch
 from contextlib import nullcontext
 from tqdm.auto import tqdm
+from clouds.trackers.base import BaseTracker, NullTracker
 
 @dataclass
 class TrainConfig:
@@ -19,6 +20,7 @@ class Trainer:
         device: torch.device,
         classes: List[str],
         metrics_factory: Callable[[List[str]], Any], #lambda cls: MultiLabelMetrics(cls)
+        tracker: Optional[BaseTracker] = None,
         use_cuda_amp: Optional[bool] = None,
     ):
         self.model = model.to(device)
@@ -27,6 +29,7 @@ class Trainer:
         self.device = device
         self.classes = classes
         self.metrics_factory = metrics_factory
+        self.tracker = tracker or NullTracker()
 
         if use_cuda_amp is None:
             use_cuda_amp = torch.cuda.is_available()
@@ -78,11 +81,21 @@ class Trainer:
         return total_loss / max(total, 1), metrics.compute()
 
     def fit(self, train_loader, val_loader, cfg: TrainConfig):
+        self.tracker.start()
         best_metric = -float("inf")
 
         for ep in range(1, cfg.epochs + 1):
             tr_loss, tr = self._run_epoch(train_loader, train=True,  epoch=ep)
             va_loss, va = self._run_epoch(val_loader,   train=False, epoch=ep)
+
+            self.tracker.log_metrics(
+                {"train/loss": tr_loss, "train/micro_f1": tr["micro_f1"], "train/macro_f1": tr["macro_f1"]},
+                step=ep
+            )
+            self.tracker.log_metrics(
+                {"val/loss": va_loss, "val/micro_f1": va["micro_f1"], "val/macro_f1": va["macro_f1"]},
+                step=ep
+            )
 
             selected = va["micro_f1"]
             tqdm.write(
@@ -97,6 +110,9 @@ class Trainer:
                 best_metric = selected
                 if cfg.ckpt_path:
                     torch.save(self.model.state_dict(), cfg.ckpt_path)
+                    self.tracker.log_artifact(cfg.ckpt_path)
+        
+        self.tracker.end()
 
     @torch.no_grad()
     def evaluate(self, loader, thresholds: Optional[np.ndarray] = None) -> Dict[str, Any]:

@@ -1,6 +1,7 @@
 import torch
 from typing import Optional, Dict, Any
 from clouds.metrics.metrics import MultiLabelMetrics
+from clouds.trackers.base import BaseTracker, NullTracker
 from clouds.train.trainer import Trainer, TrainConfig
 from clouds.presets.registry import get_data, get_model
 
@@ -18,7 +19,10 @@ def run_experiment(
     device: Optional[torch.device] = None,
     csv_path: Optional[str] = None,
     transforms=None,
+    tracker: Optional[BaseTracker] = None
 ) -> Dict[str, Any]:
+    tracker = tracker or NullTracker()
+
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     data_fn = get_data(data)
@@ -43,8 +47,16 @@ def run_experiment(
         device=device,
         classes=db.classes,
         metrics_factory=lambda cls: MultiLabelMetrics(cls),
+        tracker=tracker
     )
     cfg = TrainConfig(epochs=epochs, ckpt_path=ckpt_path)
     best_val = trainer.fit(db.train_loader, db.val_loader, cfg)
+
     final_val = trainer.evaluate(db.val_loader)
+    tracker.log_metrics({f"final/{k}": v for k, v in final_val.items()})
+
+    if hasattr(tracker, "log_pytorch_model"):
+        tracker.log_pytorch_model(trainer.model, artifact_path="model")
+
+    tracker.end()
     return {"best": best_val, "final": final_val}
