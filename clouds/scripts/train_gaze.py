@@ -76,7 +76,3 @@ best_val = trainer.fit(train_loader, val_loader, config)
 
 val_stats = trainer.evaluate(val_loader)
 print(val_stats)
-
-# next: refactor this script to avoid mixing high/low level code
-# move imports to top of file
-# continue some abstractions?

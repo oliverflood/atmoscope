@@ -21,8 +21,6 @@ def run_experiment(
     transforms=None,
     tracker: Optional[BaseTracker] = None
 ) -> Dict[str, Any]:
-    tracker = tracker or NullTracker()
-
     device = device or torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     data_fn = get_data(data)
@@ -39,6 +37,21 @@ def run_experiment(
                   weight_decay=weight_decay,
                   device=device, 
                   pos_weight=db.pos_weight)
+    
+    tracker = tracker or NullTracker()
+    tracker.start()
+    tracker.log_params({
+        "data": data,
+        "model": model,
+        "seed": seed, 
+        "epochs": epochs,
+        "batch_size": batch_size,
+        "val_size": val_size, 
+        "lr": lr,
+        "weight_decay": weight_decay,
+        "ckpt_path": ckpt_path, 
+        "csv_path": csv_path,
+    })
 
     trainer = Trainer(
         model=mb.model,

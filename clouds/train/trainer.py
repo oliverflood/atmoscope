@@ -81,7 +81,6 @@ class Trainer:
         return total_loss / max(total, 1), metrics.compute()
 
     def fit(self, train_loader, val_loader, cfg: TrainConfig):
-        self.tracker.start()
         best_metric = -float("inf")
 
         for ep in range(1, cfg.epochs + 1):
@@ -111,9 +110,7 @@ class Trainer:
                 if cfg.ckpt_path:
                     torch.save(self.model.state_dict(), cfg.ckpt_path)
                     self.tracker.log_artifact(cfg.ckpt_path)
-        
-        self.tracker.end()
-
+    
     @torch.no_grad()
     def evaluate(self, loader, thresholds: Optional[np.ndarray] = None) -> Dict[str, Any]:
         self.model.eval()
