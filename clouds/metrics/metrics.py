@@ -59,8 +59,8 @@ class MultiLabelMetrics:
             "macro_f1": float(macro),
             "micro_AP": micro_AP,
             "macro_AP": macro_AP,
-            "per_class_f1": {c: float(f) for c, f in zip(self.classes, per_f1)},
-            "support": {c: s for c, s in zip(self.classes, support)},
+            # "per_class_f1": {c: float(f) for c, f in zip(self.classes, per_f1)},
+            # "support": {c: s for c, s in zip(self.classes, support)},
         }
 
     def tune_thresholds_for_f1(self, max_points: int = 19) -> np.ndarray:

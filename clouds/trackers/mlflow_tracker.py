@@ -1,10 +1,9 @@
 from __future__ import annotations
 from typing import Optional, Dict, Any
-from .base import BaseTracker
 import mlflow
 import mlflow.pytorch as mlflow_pytorch
 
-class MLflowTracker(BaseTracker):
+class MLflowTracker():
     def __init__(self, 
             experiment: str = "clouds", 
             run_name: Optional[str] = None,
@@ -34,17 +33,7 @@ class MLflowTracker(BaseTracker):
             self._active = False
 
     def log_params(self, params: Dict[str, Any]):
-        # flatten nested dicts a bit
-        flat = {}
-        for k, v in params.items():
-            if isinstance(v, (list, tuple, set)):
-                v = ",".join(map(str, v))
-            elif isinstance(v, dict):
-                for kk, vv in v.items():
-                    flat[f"{k}.{kk}"] = vv
-                continue
-            flat[k] = v
-        mlflow.log_params(flat)
+        mlflow.log_params(params)
 
     def log_metrics(self, metrics: Dict[str, float], step: Optional[int] = None):
         mlflow.log_metrics(metrics, step=step) if step is not None else mlflow.log_metrics(metrics)
@@ -58,6 +47,6 @@ class MLflowTracker(BaseTracker):
     def log_dict(self, d: Dict[str, Any], artifact_file: str):
         mlflow.log_dict(d, artifact_file)
 
-    def log_pytorch_model(self, model, artifact_path: str = "model"):
-        mlflow_pytorch.log_model(model, artifact_path=artifact_path,
+    def log_model(self, model, artifact_path: str = "model"):
+        mlflow_pytorch.log_model(model, name=artifact_path,
                                  registered_model_name=self.register_model)

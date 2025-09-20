@@ -4,7 +4,7 @@ import numpy as np
 import torch
 from contextlib import nullcontext
 from tqdm.auto import tqdm
-from clouds.trackers.base import BaseTracker, NullTracker
+from clouds.trackers.mlflow_tracker import MLflowTracker
 
 @dataclass
 class TrainConfig:
@@ -20,7 +20,7 @@ class Trainer:
         device: torch.device,
         classes: List[str],
         metrics_factory: Callable[[List[str]], Any], #lambda cls: MultiLabelMetrics(cls)
-        tracker: Optional[BaseTracker] = None,
+        tracker: MLflowTracker,
         use_cuda_amp: Optional[bool] = None,
     ):
         self.model = model.to(device)
@@ -75,7 +75,7 @@ class Trainer:
             metrics.update(y, logits)
             cur = metrics.compute()
 
-            post = {"loss": f"{(total_loss/max(total,1)):.4f}", "μF1": f"{cur['micro_f1']:.3f}"}
+            post = {"loss": f"{(total_loss/max(total,1)):.4f}", "macro_f1": f"{cur['macro_f1']:.3f}"}
             pbar.set_postfix(post)
 
         return total_loss / max(total, 1), metrics.compute()
@@ -84,25 +84,20 @@ class Trainer:
         best_metric = -float("inf")
 
         for ep in range(1, cfg.epochs + 1):
-            tr_loss, tr = self._run_epoch(train_loader, train=True,  epoch=ep)
-            va_loss, va = self._run_epoch(val_loader,   train=False, epoch=ep)
+            tr_loss, tr = self._run_epoch(train_loader, train=True, epoch=ep)
+            va_loss, va = self._run_epoch(val_loader, train=False, epoch=ep)
 
-            self.tracker.log_metrics(
-                {"train/loss": tr_loss, "train/micro_f1": tr["micro_f1"], "train/macro_f1": tr["macro_f1"]},
-                step=ep
-            )
-            self.tracker.log_metrics(
-                {"val/loss": va_loss, "val/micro_f1": va["micro_f1"], "val/macro_f1": va["macro_f1"]},
-                step=ep
-            )
+            tr["loss"] = tr_loss
+            self.tracker.log_metrics({f"train/{k}": v for k,v in tr.items()}, step=ep)
+            
+            va["loss"] = va_loss
+            self.tracker.log_metrics({f"val/{k}": v for k,v in va.items()}, step=ep)
 
-            selected = va["micro_f1"]
+            selected = va["macro_f1"]
             tqdm.write(
                 f"Epoch {ep:02d} | "
-                f"train_loss {tr_loss:.4f}  μF1 {tr['micro_f1']:.3f}  M-F1 {tr['macro_f1']:.3f}"
-                f"\n  μAP {tr.get('micro_AP', float('nan')):.3f}  M-AP {tr.get('macro_AP', float('nan')):.3f} | "
-                f"val_loss {va_loss:.4f}  μF1 {va['micro_f1']:.3f}  M-F1 {va['macro_f1']:.3f}"
-                f"\n  μAP {va.get('micro_AP', float('nan')):.3f}  M-AP {va.get('macro_AP', float('nan')):.3f}"
+                f"(train) loss {tr_loss:.4f}  macro_f1 {tr['macro_f1']:.3f}  "
+                f"(val) loss {va_loss:.4f}  macro_f1 {va['macro_f1']:.3f}"
             )
 
             if selected > best_metric:
