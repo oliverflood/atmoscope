@@ -12,7 +12,8 @@ from clouds import (
     GazeToCoarse, 
     TrainConfig, 
     Trainer,
-    MultiLabelMetrics
+    MultiLabelMetrics, 
+    MLflowTracker,
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -42,7 +43,6 @@ va_ds = torch.utils.data.Subset(val_ds,  val_idx)
 train_loader = DataLoader(tr_ds, batch_size=32, shuffle=True,  num_workers=2, pin_memory=True)
 val_loader = DataLoader(va_ds, batch_size=32, shuffle=False, num_workers=2, pin_memory=True)
 
-
 num_classes = len(adapter.classes)
 model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 in_feats = model.fc.in_features
@@ -62,6 +62,11 @@ optimizer = torch.optim.AdamW(model.parameters(), lr=3e-4, weight_decay=1e-2)
 # ckpt = torch.load(ckpt_path, map_location=device, weights_only=True)
 # model.load_state_dict(ckpt)
 
+tracker = MLflowTracker(
+    experiment="clouds",
+    run_name="rn18_coarse7tiny_seed42",
+    tags={"project":"clouds-ml","label_space":"coarse7"}
+)
 trainer = Trainer(
     model=model,
     optimizer=optimizer,
@@ -69,6 +74,7 @@ trainer = Trainer(
     device=device,
     classes=adapter.classes,
     metrics_factory=lambda cls: MultiLabelMetrics(cls),
+    tracker=tracker
 )
 
 config = TrainConfig(epochs=1, ckpt_path=f"{MODELS_DIR}/resnet18_coarse7_best.pt")
