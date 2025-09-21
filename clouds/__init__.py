@@ -5,6 +5,7 @@ from .data.datasets import ImageDataset
 from .data.image_store import ImageStore
 from .metrics.metrics import MultiLabelMetrics
 from .train.trainer import Trainer, TrainConfig
+from .trackers.mlflow_tracker import MLflowTracker
 
 __all__ = [
     "LabelSpace", "COARSE_7",
