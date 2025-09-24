@@ -45,7 +45,7 @@ def build_convnext_tiny(
     model = convnext_tiny(weights=weights)
 
     in_feats = model.classifier[2].in_features
-    model.classifier[2] = nn.Linear(in_feats, num_classes)
+    model.classifier[2] = nn.Linear(in_feats, num_classes) # type: ignore
 
     if device is not None:
         model = model.to(device)

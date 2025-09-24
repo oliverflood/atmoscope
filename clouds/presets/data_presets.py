@@ -8,6 +8,7 @@ from clouds.data.loaders import GazeLoader
 from clouds.data.adapters import GazeToCoarse
 from clouds.data.image_store import ImageStore
 from clouds.data.datasets import ImageDataset
+from clouds.presets.transforms import TFMS_BASIC
 from .bundles import DataBundle
 from .registry import register_data
 
@@ -19,7 +20,7 @@ def make_gaze_data(
     seed: int = 42,
     num_workers: int = 2,
     device: Optional[torch.device] = None,
-    transforms: Optional[T.Compose] = None,
+    transforms: T.Compose = TFMS_BASIC,
 ):
     csv_path = csv_path or f"{DATA_INTERIM}/gaze_raw.csv"
     df = GazeLoader(csv_path).load()
@@ -31,15 +32,6 @@ def make_gaze_data(
     gss = GroupShuffleSplit(n_splits=1, test_size=val_size, random_state=seed)
     groups = np.array(df["observation_number"].astype(str).values)
     train_idx, val_idx = next(gss.split(df, groups=groups))
-
-    # default transforms (ImageNet)
-    if transforms is None:
-        transforms = T.Compose([
-            T.Resize(256), 
-            T.CenterCrop(224),
-            T.ToTensor(),
-            T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
-        ])
 
     store = ImageStore()
     full = ImageDataset(df, adapter, store, transforms=transforms)
@@ -77,7 +69,7 @@ def make_gaze_tiny_data(
     seed: int = 42,
     num_workers: int = 2,
     device: Optional[torch.device] = None,
-    transforms: Optional[T.Compose] = None,
+    transforms: T.Compose = TFMS_BASIC,
 ):
     csv_path = csv_path or f"{DATA_INTERIM}/gaze_raw.csv"
     df = GazeLoader(csv_path).load()
@@ -92,15 +84,6 @@ def make_gaze_tiny_data(
     gss = GroupShuffleSplit(n_splits=1, test_size=val_size, random_state=seed)
     groups = np.array(df["observation_number"].astype(str).values)
     train_idx, val_idx = next(gss.split(df, groups=groups))
-
-    # default transforms (ImageNet)
-    if transforms is None:
-        transforms = T.Compose([
-            T.Resize(256), 
-            T.CenterCrop(224),
-            T.ToTensor(),
-            T.Normalize(mean=[0.485,0.456,0.406], std=[0.229,0.224,0.225]),
-        ])
 
     store = ImageStore()
     full = ImageDataset(df, adapter, store, transforms=transforms)
