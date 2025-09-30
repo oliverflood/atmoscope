@@ -1,0 +1,7 @@
+streamlit==1.37.0
+pillow
+numpy
+
+# CPU wheels for PyTorch and TorchVision
+torch==2.3.1
+torchvision==0.18.1

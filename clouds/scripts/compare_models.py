@@ -13,12 +13,12 @@ tracker = MLflowTracker(
 run_experiment(
     data="gaze",
     model="convnext_tiny",
-    epochs=15,
+    epochs=15, 
     batch_size=32,
     lr=3e-4,
     weight_decay=1e-2,
     val_size=0.2,
-    ckpt_path=f"{MODELS_DIR}/convtiny_coarse7_best.pt",
+    ckpt_path=f"{MODELS_DIR}/convtiny_coarse7_test_best.pt",
     device=torch.device("cuda" if torch.cuda.is_available() else "cpu"),
     transforms=TFMS_MEDIUM,
     tracker=tracker

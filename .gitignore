@@ -7,6 +7,7 @@ models/
 # Python litter
 .ipynb_checkpoints/
 __pycache__
+*.egg-info
 
 # MLflow local store
 mlruns/
