@@ -1,3 +1,6 @@
+
+<img width="645" height="482" alt="Screenshot from 2025-11-16 21-23-55" src="https://github.com/user-attachments/assets/a64e8659-516d-45fe-b0e2-79300cb9ff0f" />
+
 # ☁️ Atmoscope ☁️
 An ML project focused on multi-label cloud type identification primarily from the [NASA GLOBE CLOUD GAZE dataset](https://observer.globe.gov/get-data/clouds-data#cloudgaze). 
 Built with PyTorch, torchvision backbones, multi-label metrics, and MLflow tracking. 
